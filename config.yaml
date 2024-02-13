@@ -1,0 +1,74 @@
+name: 'efficient capsnet'
+seed: 22
+cuda: True
+
+data_loader:
+  type: 'MnistDataLoader'
+  args: # see utils/data_loader.py
+    data_dir: 'data/'
+    batch_size: 16
+    shuffle: True
+    validation_split: 0.1
+    num_workers: 1
+
+arch:
+  type: 'FinalCapsNet'
+  args: {} # see model/model.py
+optimizer:
+  type: 'Adam'
+  args: # see torch.optim
+    lr: 5.e-4
+lr_scheduler:
+  type: 'ExponentialLR'
+  args: # see torch.optim.lr_scheduler
+    gamma: 0.98
+
+loss:
+  type: 'TotalLoss'
+  args: # see model/losses.py
+    m_pos: 0.9
+    m_neg: 0.1
+    lambda_: 0.5
+    recon_factor: 5.e-4
+metrics: # see model/metrics.py
+  - 'accuracy'
+
+trainer:
+  epochs: 5  # 100 in paper
+  log_step: 1000  # log data every x step of (len(data)/batch_size)
+  save_dir: 'saved/'
+  save_period: 1  # save data on every x epoch
+  verbosity: 0  # 
+  monitor: 'min val_loss'
+  early_stop: 10
+  tensorboard: True
+  wandb: False  # not yet implemented
+
+logger:
+  version: 1
+  disable_existing_loggers: False
+  formatters:
+    simple:
+      format: '%(message)s'
+    datetime:
+      format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+      datefmt: '%Y-%m-%d %H:%M:%S'
+  handlers:
+    console:
+      class: 'logging.StreamHandler'
+      level: 'DEBUG'
+      formatter: 'simple'
+      stream: 'ext://sys.stdout'
+    info_file_handler:
+      class: 'logging.handlers.RotatingFileHandler'
+      level: 'INFO'
+      formatter: 'datetime'
+      filename: 'info.log'
+      maxBytes: 10485760
+      backupCount: 20
+      encoding: 'utf8'
+  root:
+    level: 'INFO'
+    handlers:
+      - 'console'
+      - 'info_file_handler'
