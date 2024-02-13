@@ -1,6 +1,8 @@
-name: 'efficient capsnet'
-seed: 22
-cuda: True
+main:
+  name: 'efficient capsnet'
+  seed: 22
+  cuda: True
+  verbosity: 0  # 0: debug, 1: info, 2: warning, 3: error
 
 data_loader:
   type: 'MnistDataLoader'
@@ -38,37 +40,37 @@ trainer:
   log_step: 1000  # log data every x step of (len(data)/batch_size)
   save_dir: 'saved/'
   save_period: 1  # save data on every x epoch
-  verbosity: 0  # 
+  verbosity: 0  # same as main.verbosity config
   monitor: 'min val_loss'
-  early_stop: 10
-  tensorboard: True
+  early_stop: 10  # early stop training if not improve
+  tensorboard: True  # use tensorboard
   wandb: False  # not yet implemented
 
-logger:
+logger:  # global logger config
   version: 1
   disable_existing_loggers: False
   formatters:
-    simple:
+    brief:
       format: '%(message)s'
-    datetime:
+    precise:
       format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
       datefmt: '%Y-%m-%d %H:%M:%S'
   handlers:
-    console:
+    console:  # configure output logs to console
       class: 'logging.StreamHandler'
       level: 'DEBUG'
-      formatter: 'simple'
+      formatter: 'brief'
       stream: 'ext://sys.stdout'
-    info_file_handler:
+    file:  # write logs to a file
       class: 'logging.handlers.RotatingFileHandler'
       level: 'INFO'
-      formatter: 'datetime'
+      formatter: 'precise'
       filename: 'info.log'
-      maxBytes: 10485760
-      backupCount: 20
+      maxBytes: 1.e+6
+      backupCount: 5
       encoding: 'utf8'
-  root:
+  root:  # new logger object will inherit from this
     level: 'INFO'
     handlers:
       - 'console'
-      - 'info_file_handler'
+      - 'file'
