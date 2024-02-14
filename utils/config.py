@@ -62,7 +62,7 @@ class Config:
         assert cfg_fname.exists(), f"Config file not found at {cfg_fname}"
 
         config = read_yaml(cfg_fname)
-        return cls(config)
+        return cls(config, args.run_id)
 
     def init_obj(self, cfg_name: str, module: Type[Any], *args, **kwargs) -> Any:
         """Initialize an object from a module using the configuration.

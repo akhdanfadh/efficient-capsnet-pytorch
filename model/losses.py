@@ -33,7 +33,7 @@ class TotalLoss(nn.Module):
         self.recon_loss = ReconstructionLoss()
         self.recon_factor = recon_factor
 
-    def forward(self, targets, digit_probs, reconstructions, input_images):
+    def forward(self, input_images, targets, reconstructions, digit_probs):
         margin = self.margin_loss(targets, digit_probs)
         recon = self.recon_loss(reconstructions, input_images)
         return margin + self.recon_factor * recon

@@ -1,39 +1,74 @@
 from abc import abstractmethod
+from typing import Any, Callable
 
-import numpy as np
 import torch
+from torch.utils.data import DataLoader
 from torchvision.utils import make_grid
 
-from .logger import TensorboardWriter
-from .tools import MetricTracker, inf_loop
+from .config import Config
+from .logger import TensorboardWriter, get_logger
+from .tools import MetricTracker
 
 
 class BaseTrainer:
-    def __init__(self, config, model, optimizer, loss_fn, metric_fns):
+    """Custom base class for all trainers.
+
+    This class provides basic utilities for training a model, including setting
+    up the model architecture, initializing the optimizer and loss function, and
+    providing logging and visualization utilities. The class also supports
+    monitoring model performance and saving the best model.
+
+    Attributes:
+        config (Config): The configuration object.
+        model (torch.nn.Module): The model architecture.
+        optimizer (torch.optim.Optimizer): The optimizer.
+        criterion (torch.nn.Module | Callable): The loss function.
+        metric_fns (list[torch.nn.Module | Callable]): A list of metric functions.
+        n_epoch (int): The number of epochs to train the model.
+        start_epoch (int): The starting epoch number, used for resuming training.
+        early_stop (int): The number of epochs to wait before early stopping.
+        logger (Logger): The logger instance.
+        writer (TensorboardWriter): The visualization writer instance.
+        log_step (int): The frequency of logging training information.
+        save_period (int): The frequency of saving model checkpoints.
+        checkpoint_dir (Path): The directory to save model checkpoints.
+        monitor (str): The model performance monitoring mode.
+        mnt_mode (str): The monitoring mode (min or max).
+        mnt_best (float): The best monitored metric value.
+    """
+
+    def __init__(
+        self,
+        config: Config,
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer,
+        criterion: torch.nn.Module | Callable,
+        metric_fns: list[torch.nn.Module | Callable],
+    ):
         self.config = config
-        cfg_trainer = self.config["trainer"]
+        cfg_trainer: dict = self.config["trainer"]
 
         # setup architecture
         self.model = model
         self.optimizer = optimizer
-        self.loss_fn = loss_fn
+        self.criterion = criterion
         self.metric_fns = metric_fns
-        self.epochs = cfg_trainer["epochs"]
+        self.n_epoch: int = cfg_trainer["epochs"]
         self.start_epoch = 1
 
         # setup logger and visualization writer instance
-        self.logger = config.get_logger(
+        self.logger = get_logger(
             name="trainer", verbosity=config["trainer"]["verbosity"]
         )
         self.writer = TensorboardWriter(
             config.log_dir, self.logger, enabled=cfg_trainer["tensorboard"]
         )
-        self.log_step = cfg_trainer["log_step"]
-        self.save_period = cfg_trainer["save_period"]
+        self.log_step: int = cfg_trainer["log_step"]
+        self.save_period: int = cfg_trainer["save_period"]
         self.checkpoint_dir = config.save_dir
 
         # configuration to monitor model performance and save best
-        self.monitor = cfg_trainer.get("monitor", "off")
+        self.monitor: str = cfg_trainer.get("monitor", "off")
         if self.monitor == "off":
             self.mnt_mode = "off"
             self.mnt_best = 0
@@ -44,18 +79,35 @@ class BaseTrainer:
                 "max",
             ], "Only support min and max monitor mode"
             self.mnt_best = float("inf") if self.mnt_mode == "min" else float("-inf")
-            self.early_stop = cfg_trainer.get("early_stop", float("inf"))
+            self.early_stop: int = cfg_trainer.get("early_stop", float("inf"))
             if self.early_stop < 0:
                 self.early_stop = float("inf")
 
     @abstractmethod
-    def _train_epoch(self, epoch):
+    def _train_epoch(self, epoch: int) -> dict:
+        """Abstract method for training the model for one epoch.
+
+        Args:
+            epoch (int): The current epoch number.
+
+        Returns:
+            dict: A dictionary containing logged information for this epoch.
+
+        Raises:
+            NotImplementedError: This is an abstract method that should be
+                implemented by subclasses.
+        """
         raise NotImplementedError
 
-    def train(self):
+    def train(self) -> None:
+        """Full model training logic for a specified number of epochs.
+
+        Raises:
+            KeyError: If the specified metric for monitoring is not found in the log.
+        """
         not_improved_count = 0
-        for epoch in range(self.start_epoch, self.epochs + 1):
-            result = self._train_epoch(epoch)
+        for epoch in range(self.start_epoch, self.n_epoch + 1):
+            result: dict = self._train_epoch(epoch)
 
             # save logged information into log dict
             log = {"epoch": epoch}
@@ -63,13 +115,12 @@ class BaseTrainer:
 
             # print logged information to the screen
             for key, value in log.items():
-                self.logger.info("    {:15s}: {}".format(str(key), value))
+                self.logger.info("   {:15s}: {}".format(str(key), value))
 
-            # evaluate model performance according to configured metric, save best checkpoint as model_best
+            # monitor best performance and perform early stopping
             best = False
             if self.monitor != "off":
-                # check whether model performance improved or not, according to specified metric (mnt_metric)
-                try:
+                try:  # check improvement on the specified monitor metric
                     improved = (
                         self.mnt_mode == "min" and log[self.mnt_metric] < self.mnt_best
                     ) or (
@@ -77,9 +128,8 @@ class BaseTrainer:
                     )
                 except KeyError:
                     self.logger.warning(
-                        "Warning: Metric '{}' is not found. Model performance monitoring is disabled.".format(
-                            self.mnt_metric
-                        )
+                        "Warning: Metric '%s' is not found. Model performance monitoring is disabled.",
+                        self.mnt_metric,
                     )
                     self.monitor = "off"
                     improved = False
@@ -94,9 +144,8 @@ class BaseTrainer:
                 # early stopping
                 if not_improved_count > self.early_stop:
                     self.logger.info(
-                        "Validation performance didn't improve for {} epochs. Training stops.".format(
-                            self.early_stop
-                        )
+                        "Validation performance didn't improve for %d epochs. Training stops.",
+                        self.early_stop,
                     )
                     break
 
@@ -104,7 +153,14 @@ class BaseTrainer:
             if epoch % self.save_period == 0:
                 self._save_checkpoint(epoch, save_best=best)
 
-    def _save_checkpoint(self, epoch, save_best=False):
+    def _save_checkpoint(self, epoch: int, save_best: bool = False) -> None:
+        """Save the current model checkpoint.
+
+        Args:
+            epoch (int): The current epoch number.
+            save_best (bool, optional): Whether to save this checkpoint as the
+                best so far. Defaults to False.
+        """
         arch = type(self.model).__name__
         state = {
             "arch": arch,
@@ -114,126 +170,155 @@ class BaseTrainer:
             "monitor_best": self.mnt_best,
             "config": self.config,
         }
-        fname = str(self.checkpoint_dir / f"checkpoint-epoch{epoch}.pth")
+        fname = str(self.checkpoint_dir / f"ep{epoch}.pth")
         torch.save(state, fname)
+        self.logger.info("Checkpoint saved: %s ...", fname)
 
-        self.logger.info("Checkpoint saved: {} ...".format(fname))
-        if save_best:
+        if save_best:  # save as the best yet
             best_fname = str(self.checkpoint_dir / "model_best.pth")
             torch.save(state, best_fname)
-            self.logger.info("Best checkpoint saved: {} ...".format(best_fname))
+            self.logger.info("Best checkpoint saved: %s ...", best_fname)
 
 
 class MnistTrainer(BaseTrainer):
+    """Custom trainer for the MNIST dataset, validation included.
+
+    Attributes:
+        config (Config): Configuration object.
+        device (torch.device): Device to run the model on.
+        model (torch.nn.Module): Model to be trained.
+        optimizer (torch.optim.Optimizer): Optimizer for training.
+        criterion (torch.nn.Module | Callable): Loss function.
+        metric_fns (list[Any]): List of metric functions.
+        train_data_loader (torch.utils.data.DataLoader): Training data loader.
+        valid_data_loader (torch.utils.data.DataLoader, optional): Validation data
+            loader. Defaults to None.
+        lr_scheduler (torch.optim.lr_scheduler.LRScheduler, optional):
+            Learning rate scheduler. Defaults to None.
+        n_batch (int): Number of training steps (batches) in an epoch.
+        train_metrics (MetricTracker): Training metric tracker.
+        valid_metrics (MetricTracker): Validation metric tracker.
+    """
+
     def __init__(
         self,
-        config,
-        device,
-        train_data_loader,
-        model,
-        optimizer,
-        loss_fn,
-        metric_fns,
-        scheduler=None,
-        valid_data_loader=None,
-        len_epoch=None,
+        config: Config,
+        device: torch.device,
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer,
+        criterion: torch.nn.Module | Callable,
+        metric_fns: list[torch.nn.Module | Callable],
+        train_data_loader: DataLoader,
+        valid_data_loader: DataLoader = None,
+        lr_scheduler: torch.optim.lr_scheduler.LRScheduler = None,
     ):
-        super().__init__(config, model, optimizer, loss_fn, metric_fns)
+        super().__init__(config, model, optimizer, criterion, metric_fns)
         self.config = config
         self.device = device
-        self.scheduler = scheduler
+        self.lr_scheduler = lr_scheduler
 
         # data loader and metric configuration
         self.train_loader = train_data_loader
         self.valid_loader = valid_data_loader
-        self.do_validation = self.valid_loader is not None
         self.train_metrics = MetricTracker(
-            "loss", *[m.__name__ for m in metric_fns]  # , writer=self.writer
+            "loss", *[m.__name__ for m in metric_fns], writer=self.writer
         )
         self.valid_metrics = MetricTracker(
-            "loss", *[m.__name__ for m in metric_fns]  # , writer=self.writer
+            "loss", *[m.__name__ for m in metric_fns], writer=self.writer
         )
-
-        # epoch configuration
-        if len_epoch is None:  # epoch-based training
-            self.len_epoch = len(self.train_loader)
-        else:  # iteration-based training
-            self.train_loader = inf_loop(self.train_loader)
-            self.len_epoch = len_epoch
+        self.n_batch = len(self.train_loader)
 
     def _train_epoch(self, epoch):
-        self.model.train()
+        self.model.train()  # set the model to training mode
         self.train_metrics.reset()
-        for batch_idx, (input_images, targets) in enumerate(self.train_loader):
-            input_images, targets = input_images.to(self.device), targets.to(
-                self.device
-            )
+
+        for batch_idx, (images, labels) in enumerate(self.train_loader):
+            # configure data and optimizer
+            images = images.to(self.device)
+            labels = labels.to(self.device)
             self.optimizer.zero_grad()  # zero the gradients
 
             # forward and backward pass
-            reconstructions, digit_caps_len = self.model(input_images, targets, mode='train')
-            loss = self.loss_fn(targets, digit_caps_len, reconstructions, input_images)
+            out_images, out_labels = self.model(images, labels, mode="train")
+            loss = self.criterion(images, labels, out_images, out_labels)
             loss.backward()
             self.optimizer.step()
 
-            y_pred = digit_caps_len.argmax(dim=1)  # get the index of the max probability
-            y_true = targets.argmax(dim=1)
-            self.writer.set_step((epoch - 1) * self.len_epoch + batch_idx)
+            # get the index of the maximum value
+            label = labels.argmax(dim=1)  # from one-hot
+            out_label = out_labels.argmax(dim=1)  # from probability
+
+            # update tracker
+            self.writer.set_step((epoch - 1) * self.n_batch + batch_idx)
             self.train_metrics.update("loss", loss.item())
             for metric in self.metric_fns:
-                self.train_metrics.update(metric.__name__, metric(y_pred, y_true))
-            
+                self.train_metrics.update(metric.__name__, metric(label, out_label))
+
+            # log training information
             if batch_idx % self.log_step == 0 or batch_idx == len(self.train_loader):
-                self.logger.debug(
-                    "Train Epoch: {} {} Loss: {:.6f}".format(
-                        epoch, self._progress(batch_idx), loss.item()
-                    )
+                self.logger.debug(self._progress(epoch, batch_idx, loss.item()))
+                self.writer.add_image(
+                    "input", make_grid(images.cpu(), nrow=8, normalize=True)
                 )
-                self.writer.add_image('input', make_grid(input_images.cpu(), nrow=8, normalize=True))
 
-            if batch_idx == self.len_epoch:
-                break
-        log = self.train_metrics.result()
+        train_log = self.train_metrics.result()
 
-        if self.do_validation:
+        # validate the model, if provided
+        if self.valid_loader is not None:
             val_log = self._valid_epoch(epoch)
-            log.update(**{"val_" + k: v for k, v in val_log.items()})
+            train_log.update(**{"val_" + k: v for k, v in val_log.items()})
+        
+        # update learning rate
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.step()
 
-        if self.scheduler is not None:
-            self.scheduler.step()
-        return log
+        return train_log
 
     def _valid_epoch(self, epoch):
         self.model.eval()
         self.valid_metrics.reset()
         with torch.no_grad():
-            for batch_idx, (input_images, targets) in enumerate(self.valid_loader):
-                input_images, targets = input_images.to(self.device), targets.to(
-                    self.device
-                )
-                reconstructions, digit_caps_len = self.model(input_images, targets, mode='valid')
-                loss = self.loss_fn(
-                    targets, digit_caps_len, reconstructions, input_images
-                )
+            for batch_idx, (images, labels) in enumerate(self.valid_loader):
+                # configure data and optimizer
+                images = images.to(self.device)
+                labels = labels.to(self.device)
 
-                y_pred = digit_caps_len.argmax(dim=1)  # get the index of the max probability
-                y_true = targets.argmax(dim=1)
+                # # forward and backward pass
+                out_images, out_labels = self.model(images, labels, mode="eval")
+                loss = self.criterion(images, labels, out_images, out_labels)
+
+                # get the index of the maximum value
+                label = labels.argmax(dim=1)  # from one-hot
+                out_label = out_labels.argmax(dim=1)  # from probability
+
+                # update tracker
                 self.writer.set_step((epoch - 1) * len(self.valid_loader) + batch_idx, "valid")
                 self.valid_metrics.update("loss", loss.item())
                 for metric in self.metric_fns:
-                    self.valid_metrics.update(metric.__name__, metric(y_pred, y_true))
+                    self.valid_metrics.update(metric.__name__, metric(label, out_label))
 
         # add histogram of model parameters to the tensorboard
-        for name, p in self.model.named_parameters():
-            self.writer.add_histogram(name, p, bins="auto")
+        for name, param in self.model.named_parameters():
+            self.writer.add_histogram(name, param, bins="auto")
+
         return self.valid_metrics.result()
 
-    def _progress(self, batch_idx):
-        base = "[{}/{} ({:.0f}%)]"
+    def _progress(self, epoch_idx, batch_idx, loss_value):
         if hasattr(self.train_loader, "n_samples"):
             current = batch_idx * self.train_loader.batch_size
-            total = self.train_loader.n_samples
+            samples = self.train_loader.n_samples
         else:
             current = batch_idx
-            total = self.len_epoch
-        return base.format(current, total, 100.0 * current / total)
+            samples = self.n_batch
+
+        base = "Train Epoch: {:>{}}/{} [{:>{}}/{} ({:3.0f}%)], Loss: {:.6f}"
+        return base.format(
+            epoch_idx,
+            len(str(self.n_epoch)),
+            self.n_epoch,
+            current,
+            len(str(samples)),
+            samples,
+            100 * current / samples,
+            loss_value,
+        )

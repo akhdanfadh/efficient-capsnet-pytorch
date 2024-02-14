@@ -42,9 +42,9 @@ class EfficientCapsNet(nn.Module):
         return x, self.len_final_caps(x)
 
 
-class ReconstructionRegularizerNet(nn.Module):
+class ReconstructionNet(nn.Module):
     def __init__(self, input_size=(1, 28, 28), num_classes=10, num_capsules=16):
-        super(ReconstructionRegularizerNet, self).__init__()
+        super(ReconstructionNet, self).__init__()
         self.input_size = input_size
         self.fc1 = nn.Linear(in_features=num_capsules * num_classes, out_features=512)
         self.fc2 = nn.Linear(512, 1024)
@@ -68,13 +68,13 @@ class FinalCapsNet(nn.Module):
         super(FinalCapsNet, self).__init__()
         self.efficient_capsnet = EfficientCapsNet()
         self.mask = CapsMask()
-        self.generator = ReconstructionRegularizerNet()
+        self.generator = ReconstructionNet()
 
     def forward(self, x, y_true=None, mode='train'):
         x, x_len = self.efficient_capsnet(x)
         if mode == "train":
             masked = self.mask(x, y_true)
-        elif mode == "test" or mode == "valid":
+        elif mode == "eval":
             masked = self.mask(x)
         x = self.generator(masked)
         return x, x_len

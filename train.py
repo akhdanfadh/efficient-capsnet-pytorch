@@ -12,7 +12,7 @@ from utils.trainer import MnistTrainer
 from utils.logger import get_logger
 
 
-def main(cfg):
+def main(cfg: Config) -> None:
     logger = get_logger(
         name="program", verbosity=cfg["main"]["verbosity"]
     )
@@ -39,7 +39,7 @@ def main(cfg):
     # build model architecture
     model = cfg.init_obj("arch", module_arch)
     model = model.to(device)
-    logger.info("Model set up  : %s", model.__class__.__name__)
+    logger.info("Model set up  : %s", type(model).__name__)
 
     # build optimizer
     trainable_params = filter(lambda p: p.requires_grad, model.parameters())
@@ -47,8 +47,8 @@ def main(cfg):
     lr_scheduler = cfg.init_obj("lr_scheduler", torch.optim.lr_scheduler, optimizer)
 
     # get function handles of loss and metrics
-    loss = cfg.init_obj("loss", module_loss)
-    logger.info("Using loss    : %s", loss.__class__.__name__)
+    criterion = cfg.init_obj("loss", module_loss)
+    logger.info("Using loss    : %s", type(criterion).__name__)
     metrics = [getattr(module_metric, met) for met in cfg["metrics"]]
     logger.info("Using metrics : %s", [met.__name__ for met in metrics])
     print()
@@ -56,12 +56,12 @@ def main(cfg):
     trainer = MnistTrainer(
         config=cfg,
         device=device,
-        train_data_loader=train_data_loader,
         model=model,
         optimizer=optimizer,
-        loss_fn=loss,
+        criterion=criterion,
         metric_fns=metrics,
-        scheduler=lr_scheduler,
+        lr_scheduler=lr_scheduler,
+        train_data_loader=train_data_loader,
         valid_data_loader=valid_data_loader,
     )
 
@@ -73,5 +73,9 @@ if __name__ == "__main__":
     args.add_argument(
         "-c", "--config", type=str, required=True, help="path to config file"
     )
+    args.add_argument(
+        "-i", "--run_id", type=str, default=None, help="run id for the experiment"
+    )
+    
     config = Config.from_args(args)
     main(config)
