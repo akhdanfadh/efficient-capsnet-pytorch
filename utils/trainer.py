@@ -1,13 +1,12 @@
 from abc import abstractmethod
-from typing import Any, Callable
+from typing import Callable
 
 import torch
 from torch.utils.data import DataLoader
 from torchvision.utils import make_grid
 
 from .config import Config
-from .logger import TensorboardWriter, get_logger
-from .tools import MetricTracker
+from .logger import MetricTracker, TensorboardWriter, get_logger
 
 
 class BaseTrainer:
@@ -107,14 +106,12 @@ class BaseTrainer:
         """
         not_improved_count = 0
         for epoch in range(self.start_epoch, self.n_epoch + 1):
-            result: dict = self._train_epoch(epoch)
-
-            # save logged information into log dict
-            log = {"epoch": epoch}
-            log.update(result)
+            epoch_log = {"epoch": epoch}
+            result = self._train_epoch(epoch)
+            epoch_log.update(result)
 
             # print logged information to the screen
-            for key, value in log.items():
+            for key, value in epoch_log.items():
                 self.logger.info("   {:15s}: {}".format(str(key), value))
 
             # monitor best performance and perform early stopping
@@ -122,9 +119,11 @@ class BaseTrainer:
             if self.monitor != "off":
                 try:  # check improvement on the specified monitor metric
                     improved = (
-                        self.mnt_mode == "min" and log[self.mnt_metric] < self.mnt_best
+                        self.mnt_mode == "min"
+                        and epoch_log[self.mnt_metric] < self.mnt_best
                     ) or (
-                        self.mnt_mode == "max" and log[self.mnt_metric] > self.mnt_best
+                        self.mnt_mode == "max"
+                        and epoch_log[self.mnt_metric] > self.mnt_best
                     )
                 except KeyError:
                     self.logger.warning(
@@ -135,7 +134,7 @@ class BaseTrainer:
                     improved = False
 
                 if improved:
-                    self.mnt_best = log[self.mnt_metric]
+                    self.mnt_best = epoch_log[self.mnt_metric]
                     not_improved_count = 0
                     best = True
                 else:
@@ -228,7 +227,16 @@ class MnistTrainer(BaseTrainer):
         )
         self.n_batch = len(self.train_loader)
 
-    def _train_epoch(self, epoch):
+    def _train_epoch(self, epoch: int) -> dict:
+        """Train the model for one epoch.
+
+        Args:
+            epoch (int): The current epoch number.
+
+        Returns:
+            dict: A dictionary containing logged information for this epoch.
+                Valid log is included if a validation data loader is provided.
+        """
         self.model.train()  # set the model to training mode
         self.train_metrics.reset()
 
@@ -257,26 +265,37 @@ class MnistTrainer(BaseTrainer):
             # log training information
             if batch_idx % self.log_step == 0 or batch_idx == len(self.train_loader):
                 self.logger.debug(self._progress(epoch, batch_idx, loss.item()))
+                # add input images to the tensorboard
                 self.writer.add_image(
                     "input", make_grid(images.cpu(), nrow=8, normalize=True)
                 )
 
-        train_log = self.train_metrics.result()
+        epoch_log = self.train_metrics.result()
 
         # validate the model, if provided
         if self.valid_loader is not None:
             val_log = self._valid_epoch(epoch)
-            train_log.update(**{"val_" + k: v for k, v in val_log.items()})
-        
+            # add validation metrics to epoch log
+            epoch_log.update(**{"val_" + k: v for k, v in val_log.items()})
+
         # update learning rate
         if self.lr_scheduler is not None:
             self.lr_scheduler.step()
 
-        return train_log
+        return epoch_log
 
-    def _valid_epoch(self, epoch):
-        self.model.eval()
+    def _valid_epoch(self, epoch: int) -> dict:
+        """Validate the model for one epoch.
+
+        Args:
+            epoch (int): The current epoch number.
+
+        Returns:
+            dict: A dictionary containing logged information for this epoch.
+        """
+        self.model.eval()  # set the model to evaluation mode
         self.valid_metrics.reset()
+
         with torch.no_grad():
             for batch_idx, (images, labels) in enumerate(self.valid_loader):
                 # configure data and optimizer
@@ -292,7 +311,9 @@ class MnistTrainer(BaseTrainer):
                 out_label = out_labels.argmax(dim=1)  # from probability
 
                 # update tracker
-                self.writer.set_step((epoch - 1) * len(self.valid_loader) + batch_idx, "valid")
+                self.writer.set_step(
+                    (epoch - 1) * len(self.valid_loader) + batch_idx, "valid"
+                )
                 self.valid_metrics.update("loss", loss.item())
                 for metric in self.metric_fns:
                     self.valid_metrics.update(metric.__name__, metric(label, out_label))
@@ -303,7 +324,9 @@ class MnistTrainer(BaseTrainer):
 
         return self.valid_metrics.result()
 
-    def _progress(self, epoch_idx, batch_idx, loss_value):
+    def _progress(self, epoch_idx: int, batch_idx: int, loss_value: float) -> str:
+        """Return a string for logging the training progress."""
+        # get amount of training samples
         if hasattr(self.train_loader, "n_samples"):
             current = batch_idx * self.train_loader.batch_size
             samples = self.train_loader.n_samples
