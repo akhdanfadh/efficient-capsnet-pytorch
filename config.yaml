@@ -1,5 +1,5 @@
 main:
-  name: 'efficient capsnet'
+  name: 'ecaps_mnist'
   seed: 22
   cuda: True
   verbosity: 0  # 0: debug, 1: info, 2: warning, 3: error
@@ -36,15 +36,14 @@ metrics: # see model/metrics.py
   - 'accuracy'
 
 trainer:
-  epochs: 5  # 100 in paper
-  log_step: 1000  # log data every x step of (len(data)/batch_size)
+  epochs: 100  # 100 in paper
+  log_step: 1700  # log data every x step
   save_dir: 'saved/'
-  save_period: 1  # save data on every x epoch
-  verbosity: 0  # same as main.verbosity config
-  monitor: 'min val_loss'
-  early_stop: 10  # early stop training if not improve
-  tensorboard: True  # use tensorboard
-  wandb: False  # not yet implemented
+  save_period: 10  # save model every x epoch
+  verbosity: 0  # see main.verbosity
+  monitor: 'min val_loss'  # '{min|max} {metrics}'
+  early_stop: 5  # stop after x epoch not improving
+  tensorboard: True
 
 logger:  # global logger config
   version: 1
