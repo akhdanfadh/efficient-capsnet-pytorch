@@ -29,7 +29,8 @@ cd efficient-capsnet-pytorch
 
 conda create -n efficient-capsnet python=3.10
 conda activate efficient-capsnet
-pip install -r requirements.txt
+conda install pytorch torchvision pytorch-cuda=12.1 -c pytorch -c nvidia
+conda install tensorboard pyyaml pandas opencv
 ```
 
 
