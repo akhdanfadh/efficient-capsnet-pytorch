@@ -58,6 +58,8 @@ This project is licensed under the [MIT License](LICENSE).
 Code structure and training loop are based on the [pytorch-template](https://github.com/victoresque/pytorch-template) repository with lots of adjustments.
 The repo help us to understand organizing a deep learning project thoroughly.
 
+Shoutout also to mCoding video on "[Modern Python logging](https://youtu.be/9L77QExPmI0?si=JMR9pKl65j4Xeg-E)" that explains thoroughly how it works and best practices. 
+
 ## Citation
 
 Kudos to the authors of the paper for their amazing work. If you find this code useful, please consider citing the original work:
